@@ -36,7 +36,7 @@ The repository includes a full demo Jupyter Notebook applying both models to the
 ### Initialization
 
 ```python
-from llm_microscope import MllmMicroscope
+from mllm_microscope import MllmMicroscope
 
 # Initialize the microscope for a specific device
 device = "cuda:0"
@@ -57,9 +57,9 @@ embeddings = microscope.get_intermediate_embeddings(model_name, texts, images)
 
 ### Analyzing Embeddings
 
-# Analyze the extracted embeddings
 ```python
-microscope.analyze_embeddings(model_name)
+# Analyze the extracted embeddings
+all_results = microscope.analyze_embeddings(model_name, ps=True, psc=True, in_d=True, an=True)
 ```
 
 ### Plotting Results
