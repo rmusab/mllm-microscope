@@ -23,7 +23,7 @@ The repository includes a full demo Jupyter Notebook applying both models to the
 1. **Clone the repository**:
     ```sh
     git clone https://github.com/rmusab/mllm-microscope.git
-    cd llm-microscope
+    cd mllm-microscope
     ```
 
 2. **Install the required packages**:
