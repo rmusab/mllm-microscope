@@ -13,6 +13,9 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.manifold import TSNE
 
 
+from transformers import BitsAndBytesConfig
+
+
 class LlmMicroscope(object):
 
     
@@ -170,10 +173,14 @@ class MllmMicroscope(object):
     ]
     OMNIFUSION_PROMPT = "This is a dialog with AI assistant.\n"
 
-    
-    def __init__(self, device="cuda:0"):
+    def __init__(self, device="cuda:0", quantization_config=None):
         self.device = device
         self.llm_microscope = LlmMicroscope(device=self.device)
+        
+        if quantization_config is None:
+            self.quantization_config = BitsAndBytesConfig()
+        else:
+            self.quantization_config = quantization_config
         
         # Dictionary to map model names to initialization functions
         self.model_initializers = {
@@ -209,9 +216,9 @@ class MllmMicroscope(object):
         if not self.model_initialized["LLaVA-NeXT"]:
             print("Initializing the LLaVA-NeXT model...")
             # Initialize LLaVA-NeXT model and processor
-            self.llava_next_processor = LlavaNextProcessor.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf")
-            self.llava_next_model = LlavaNextForConditionalGeneration.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf", torch_dtype=torch.float16, low_cpu_mem_usage=True)
-            self.llava_next_model.to(self.device)
+            self.llava_next_processor = LlavaNextProcessor.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf", quantization_config=self.quantization_config)
+            self.llava_next_model = LlavaNextForConditionalGeneration.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf", torch_dtype=torch.float16, low_cpu_mem_usage=True, quantization_config=self.quantization_config)
+            # self.llava_next_model.to(self.device)
             
             # Extract the image token index
             self.image_token_index = self.llava_next_model.config.image_token_index
@@ -225,8 +232,8 @@ class MllmMicroscope(object):
             # Loading some sources of the projection adapter and image encoder
             hf_hub_download(repo_id="AIRI-Institute/OmniFusion", filename="models.py", local_dir='./')
             
-            self.omnifusion_tokenizer = AutoTokenizer.from_pretrained("AIRI-Institute/OmniFusion", subfolder="OmniMistral-v1_1/tokenizer", use_fast=False)
-            self.omnifusion_model = AutoModelForCausalLM.from_pretrained("AIRI-Institute/OmniFusion", subfolder="OmniMistral-v1_1/tuned-model", torch_dtype=torch.bfloat16, device_map=self.device)
+            self.omnifusion_tokenizer = AutoTokenizer.from_pretrained("AIRI-Institute/OmniFusion", subfolder="OmniMistral-v1_1/tokenizer", use_fast=False, quantization_config=self.quantization_config)
+            self.omnifusion_model = AutoModelForCausalLM.from_pretrained("AIRI-Institute/OmniFusion", subfolder="OmniMistral-v1_1/tuned-model", torch_dtype=torch.bfloat16, device_map=self.device, quantization_config=self.quantization_config)
             
             hf_hub_download(repo_id="AIRI-Institute/OmniFusion", filename="OmniMistral-v1_1/projection.pt", local_dir='./')
             hf_hub_download(repo_id="AIRI-Institute/OmniFusion", filename="OmniMistral-v1_1/special_embeddings.pt", local_dir='./')
@@ -251,14 +258,14 @@ class MllmMicroscope(object):
             layer_num = text_token_embs.shape[0]
             for i in range(layer_num):
                 if i in layer_2_text_embs_bag:
-                    layer_2_text_embs_bag[i] += list(text_token_embs[i, :, :])
+                    layer_2_text_embs_bag[i] += list(text_token_embs[i, :, :].mean(axis=0, keepdim=True))
                 else:
-                    layer_2_text_embs_bag[i] = list(text_token_embs[i, :, :])
+                    layer_2_text_embs_bag[i] = list(text_token_embs[i, :, :].mean(axis=0, keepdim=True))
                 if image_token_embs is not None:
                     if i in layer_2_image_embs_bag:
-                        layer_2_image_embs_bag[i] += list(image_token_embs[i, :, :])
+                        layer_2_image_embs_bag[i] += list(image_token_embs[i, :, :].mean(axis=0, keepdim=True))
                     else:
-                        layer_2_image_embs_bag[i] = list(image_token_embs[i, :, :])
+                        layer_2_image_embs_bag[i] = list(image_token_embs[i, :, :].mean(axis=0, keepdim=True))
         for i in range(layer_num):
             layer_2_text_embs_bag[i] = torch.stack(layer_2_text_embs_bag[i]).to(torch.float32)
             if i in layer_2_image_embs_bag:
@@ -440,7 +447,7 @@ class MllmMicroscope(object):
         print(f"Computing the intermediate embeddings for the {model_name} model...")
         embeddings = []
 
-        for i in tqdm(range(len(texts))):
+        for i in tqdm(range(len(texts))): # i -- batch index
             text = texts[i]
             image = images[i] if images is not None else None
 
@@ -460,7 +467,7 @@ class MllmMicroscope(object):
 
         self.model_layerwise_embs[model_name]['layer2text_embs'] = layer2text_embs
         self.model_layerwise_embs[model_name]['layer2image_embs'] = layer2image_embs
-
+        
         return self.model_layerwise_embs[model_name]
 
     
@@ -477,7 +484,7 @@ class MllmMicroscope(object):
         print('Text embs shape: ', text_embs_dict[0].shape)
         if image_embs_dict:
             print('Image embs shape: ', image_embs_dict[0].shape)
-
+            
         if ps:
             similarities = []
             for layer in tqdm(range(max(text_embs_dict.keys()) - 1), desc=f'{model_name} text procrustes_similarity'):
